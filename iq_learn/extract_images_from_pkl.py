@@ -25,19 +25,26 @@ class NumpyCompatUnpickler(pickle.Unpickler):
 
 
 def get_image_from_state(state):
-    """Get a single image array from a state (array or dict with 'image' key)."""
+    """Get a single image array from a state (array, LazyFrames, or dict with 'image' key)."""
     if isinstance(state, np.ndarray):
         if state.ndim >= 2:
-            return state
+            return state.copy()
         return None
     if isinstance(state, dict):
         if "image" in state:
             return np.asarray(state["image"])
-        # use first value that looks like an image (3D array)
         for v in state.values():
             arr = np.asarray(v)
             if arr.ndim >= 2:
                 return arr
+        return None
+    # LazyFrames or any array-like (e.g. from Atari frame stack)
+    try:
+        arr = np.asarray(state)
+        if arr.ndim >= 2:
+            return arr
+    except (TypeError, ValueError):
+        pass
     return None
 
 
@@ -187,6 +194,9 @@ def extract_images(pkl_path, output_dir, max_per_traj=50, max_trajs=None, prefix
                 plt.figure(figsize=(4, 4))
                 if img.ndim == 2 or (img.ndim == 3 and img.shape[-1] == 1):
                     plt.imshow(img.squeeze(), cmap="gray")
+                elif img.ndim == 3 and img.shape[-1] == 4:
+                    # Atari-style 4-frame stack: show most recent frame as grayscale
+                    plt.imshow(img[..., -1], cmap="gray")
                 else:
                     plt.imshow(img)
                 plt.axis("off")
