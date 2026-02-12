@@ -78,7 +78,7 @@ def main(cfg: DictConfig):
             episode_reward += reward
             if memory_replay.size() == REPLAY_MEMORY:
                 print('expert replay saved...')
-                memory_replay.save(f'experts/{args.env_name}_{args.expert.demos}')
+                memory_replay.save(f'experts/{args.env.name}_{args.expert.demos}')
                 exit()
 
             state = next_state
