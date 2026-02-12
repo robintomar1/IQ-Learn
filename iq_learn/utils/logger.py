@@ -125,9 +125,11 @@ class Logger(object):
                  save_tb=False,
                  log_frequency=10000,
                  agent='sac',
-                 writer=None):
+                 writer=None,
+                 wandb=None):
         self._log_dir = log_dir
         self._log_frequency = log_frequency
+        self._wandb = wandb
         if writer:
             self._sw = writer
         else:
@@ -157,6 +159,11 @@ class Logger(object):
     def _try_sw_log(self, key, value, step):
         if self._sw is not None:
             self._sw.add_scalar(key, value, step)
+        if self._wandb is not None:
+            try:
+                self._wandb.log({key: value}, step=step)
+            except Exception:
+                pass
 
     def _try_sw_log_video(self, key, frames, step):
         if self._sw is not None:
