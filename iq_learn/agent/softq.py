@@ -122,7 +122,19 @@ class SoftQ(object):
 
     # Load model parameters
     def load(self, path, suffix=""):
-        critic_path = f'{path}/{self.args.agent.name}{suffix}'
+        # If path is a file (e.g. trained_policies/softq_CartPole-v1), load it directly
+        if os.path.isfile(path):
+            critic_path = path
+        else:
+            # Try path/agent_name+suffix (e.g. trained_policies/softq/softq_PongNoFrameskip-v4)
+            candidate = os.path.join(path, f'{self.args.agent.name}{suffix}')
+            # Also check path/agent_name+suffix one level up (e.g. trained_policies/softq_PongNoFrameskip-v4)
+            if os.path.isfile(candidate):
+                critic_path = candidate
+            else:
+                parent = os.path.dirname(path)
+                fallback = os.path.join(parent, f'{self.args.agent.name}{suffix}')
+                critic_path = fallback if os.path.isfile(fallback) else candidate
         print('Loading models from {}'.format(critic_path))
         self.q_net.load_state_dict(torch.load(critic_path, map_location=self.device))
 
