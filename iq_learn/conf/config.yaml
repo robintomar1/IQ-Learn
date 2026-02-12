@@ -55,6 +55,7 @@ offline: False
 num_actor_updates: 1
 
 defaults:
+  - _self_
   - method: iq
   - agent: softq
   - env: cartpole
