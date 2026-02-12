@@ -17,16 +17,22 @@ class FrameStack(gym.Wrapper):
         self.observation_space = spaces.Box(low=0, high=255, shape=(
             shp[0] * k, shp[1], shp[2]), dtype=np.uint8)
 
-    def reset(self):
-        ob = self.env.reset()
+    def reset(self, **kwargs):
+        out = self.env.reset(**kwargs)
+        obs = out[0] if isinstance(out, tuple) else out
+        info = out[1] if isinstance(out, tuple) and len(out) > 1 else {}
         for _ in range(self.k):
-            self.frames.append(ob)
-        return self._get_ob()
+            self.frames.append(obs)
+        ob = self._get_ob()
+        return (ob, info) if isinstance(out, tuple) else ob
 
     def step(self, action):
-        ob, reward, done, info = self.env.step(action)
-        self.frames.append(ob)
-        return self._get_ob(), reward, done, info
+        out = self.env.step(action)
+        obs, reward, terminated, truncated, info = out[0], out[1], out[2], out[3], out[4]
+        self.frames.append(obs)
+        done = terminated or truncated
+        ob = self._get_ob()
+        return ob, reward, terminated, truncated, info
 
     def _get_ob(self):
         assert len(self.frames) == self.k
@@ -48,18 +54,21 @@ class FrameStackEager(gym.Wrapper):
             high=1,
             shape=((shp[0] * k,) + shp[1:]),
             dtype=env.observation_space.dtype)
-        self._max_episode_steps = env._max_episode_steps
+        self._max_episode_steps = getattr(env, '_max_episode_steps', None)
 
-    def reset(self):
-        obs = self.env.reset()
+    def reset(self, **kwargs):
+        out = self.env.reset(**kwargs)
+        obs = out[0] if isinstance(out, tuple) else out
+        info = out[1] if isinstance(out, tuple) and len(out) > 1 else {}
         for _ in range(self._k):
             self._frames.append(obs)
-        return self._get_obs()
+        ob = self._get_obs()
+        return (ob, info) if isinstance(out, tuple) else ob
 
     def step(self, action):
-        obs, reward, done, info = self.env.step(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
         self._frames.append(obs)
-        return self._get_obs(), reward, done, info
+        return self._get_obs(), reward, terminated, truncated, info
 
     def _get_obs(self):
         assert len(self._frames) == self._k
