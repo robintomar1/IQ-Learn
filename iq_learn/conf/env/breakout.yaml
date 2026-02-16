@@ -2,7 +2,7 @@
 
 env:
   name: BreakoutNoFrameskip-v4
-  demo: BreakoutNoFrameskip-v4_30.pkl
+  demo: BreakoutNoFrameskip-v4_20.pkl
   replay_mem: 200000
   initial_mem: 5000
   eps_steps: 1e6
@@ -14,9 +14,9 @@ expert:
   subsample_freq: 1
 
 eval:
-  policy: 
-  threshold:
-  use_baselines: True
+  policy: trained_policies/softq_implicit_BreakoutNoFrameskip-v4
+  threshold:  # optional: e.g. 10 to only save episodes with score >= 10
+  use_baselines: False  # use in-repo softq policy (no baselines_zoo)
   eps: 10
 
 agent:
@@ -24,6 +24,5 @@ agent:
 
 train:
   batch: 64
-
 q_net:
   _target_: agent.softq_models.AtariQNetwork

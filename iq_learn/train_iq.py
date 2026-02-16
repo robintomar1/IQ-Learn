@@ -98,7 +98,8 @@ def main(cfg: DictConfig):
                     log_frequency=args.log_interval,
                     writer=writer,
                     save_tb=True,
-                    agent=args.agent.name)
+                    agent=args.agent.name,
+                    wandb=wandb)
 
     steps = 0
 
@@ -150,7 +151,7 @@ def main(cfg: DictConfig):
                 logger.log('eval/episode_reward', returns, learn_steps)
                 logger.log('eval/episode', epoch, learn_steps)
                 logger.dump(learn_steps, ty='eval')
-                # print('EVAL\tEp {}\tAverage reward: {:.2f}\t'.format(epoch, returns))
+                print(f'  [EVAL] learn_steps={learn_steps} mean_return={returns:.2f}')
 
                 if returns > best_eval_returns:
                     # Store best eval returns
@@ -163,8 +164,8 @@ def main(cfg: DictConfig):
             done_no_lim = done
             if str(env.__class__.__name__).find('TimeLimit') >= 0 and episode_step + 1 == env._max_episode_steps:
                 done_no_lim = 0
-            if type(state) == np.ndarray:
-                online_memory_replay.add((state, next_state, action, reward, done_no_lim))
+            # Add transition (support np.ndarray and LazyFrames / Atari)
+            online_memory_replay.add((state, next_state, action, reward, done_no_lim))
 
             if online_memory_replay.size() > INITIAL_MEMORY:
                 # Start learning
@@ -179,11 +180,13 @@ def main(cfg: DictConfig):
                     return
 
                 ######
-                # IQ-Learn Modification
+                # IQ-Learn Modification (multiple updates per step to use GPU better)
                 agent.iq_update = types.MethodType(iq_update, agent)
                 agent.iq_update_critic = types.MethodType(iq_update_critic, agent)
-                losses = agent.iq_update(online_memory_replay,
-                                         expert_memory_replay, logger, learn_steps)
+                n_updates = getattr(args.train, 'updates_per_step', 1) or 1
+                for _ in range(n_updates):
+                    losses = agent.iq_update(online_memory_replay,
+                                             expert_memory_replay, logger, learn_steps)
                 ######
 
                 if learn_steps % args.log_interval == 0:
@@ -198,8 +201,9 @@ def main(cfg: DictConfig):
         logger.log('train/episode', epoch, learn_steps)
         logger.log('train/episode_reward', episode_reward, learn_steps)
         logger.log('train/duration', time.time() - start_time, learn_steps)
-        logger.dump(learn_steps, save=begin_learn)
-        # print('TRAIN\tEp {}\tAverage reward: {:.2f}\t'.format(epoch, np.mean(rewards_window)))
+        logger.dump(learn_steps, save=True)  # always print train line every episode
+        if (epoch + 1) % 10 == 0 or epoch < 3:
+            print(f'  [Ep {epoch}] reward={episode_reward:.1f} learn_steps={learn_steps}')
         save(agent, epoch, args, output_dir='results')
 
     save_path = "q_network_final.pth"

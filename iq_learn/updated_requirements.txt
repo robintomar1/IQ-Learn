@@ -9,13 +9,12 @@ torchaudio>=2.3.0
 
 # --- Reinforcement Learning ---
 stable-baselines3>=2.2.1
-# Core environment package
-gymnasium>=0.29.1,<1.0.0
-# Specific environment dependencies
-ale-py>=0.8.1
-# For CartPole/classic_control rendering (e.g. gen_vision_expert.py with render_mode="rgb_array")
+# Gymnasium with all environment families (classic_control, atari, box2d, toy_text, etc.)
+gymnasium[all]>=0.29.1,<1.0.0
+# Atari ROMs (required to run Atari envs; install after gymnasium[all])
+gymnasium[accept-rom-license]
+# For CartPole/classic_control rendering (e.g. render_mode="rgb_array")
 pygame
-# box2d-py>=2.3.10  # Optional, usually included via gymnasium[box2d]
 
 # --- Logging and Utilities ---
 tensorboard>=2.16.0

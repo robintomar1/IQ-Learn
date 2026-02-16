@@ -59,6 +59,8 @@ class MetersGroup(object):
         self._meters = defaultdict(AverageMeter)
         self._csv_file = open(self._csv_file_name, 'w')
         self._csv_writer = None
+        # All possible CSV columns from format so writer accepts later-added keys (e.g. critic_loss)
+        self._csv_fieldnames = sorted(set(k for k, _, _ in formating) | {'step'})
 
     def _prepare_file(self, prefix, suffix):
         file_name = f'{prefix}.{suffix}'
@@ -83,10 +85,12 @@ class MetersGroup(object):
     def _dump_to_csv(self, data):
         if self._csv_writer is None:
             self._csv_writer = csv.DictWriter(self._csv_file,
-                                              fieldnames=sorted(data.keys()),
-                                              restval=0.0)
+                                              fieldnames=self._csv_fieldnames,
+                                              restval=0.0,
+                                              extrasaction='ignore')
             self._csv_writer.writeheader()
-        self._csv_writer.writerow(data)
+        row = {k: data.get(k, 0.0) for k in self._csv_fieldnames}
+        self._csv_writer.writerow(row)
         self._csv_file.flush()
 
     def _format(self, key, value, ty):
