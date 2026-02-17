@@ -13,6 +13,13 @@ import os
 # Register all custom envs
 envs.register_custom_envs()
 
+# Register ALE environments for Atari games
+try:
+    import ale_py
+    gym.register_envs(ale_py)
+except ImportError:
+    print("Warning: ale_py not found. Atari environments may not be available.")
+
 def make_dcm(cfg):
     import dmc2gym
     """Helper function to create dm_control environment"""
