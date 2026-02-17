@@ -31,17 +31,19 @@ def main(cfg: DictConfig):
     env = make_env(args)
     if args.eval.use_baselines:
         from baselines_zoo.baselines_expert import BaselinesExpert
-        agent = BaselinesExpert(args.env.name, folder='rl-trained-agents')
-        # env = agent.env
+        # Use absolute path to the rl-baselines3-zoo folder
+        baselines_folder = hydra.utils.to_absolute_path('rl-baselines3-zoo/rl-trained-agents')
+        agent = BaselinesExpert(args.env.name, folder=baselines_folder, algorithm='a2c')
+        # For baselines experts, we don't need the expert_file path
+        print(f'Loading expert from: {baselines_folder}')
+        agent.load("", "")  # BaselinesExpert uses its own path logic
     else:
         agent = make_agent(env, args)
-
-    expert_file = f'{args.method.type}.para'
-    if args.eval.policy:
-        expert_file = f'{args.eval.policy}'
-    print(f'Loading expert from: {expert_file}')
-
-    agent.load(hydra.utils.to_absolute_path(expert_file), f'_{args.env.name}')
+        expert_file = f'{args.method.type}.para'
+        if args.eval.policy:
+            expert_file = f'{args.eval.policy}'
+        print(f'Loading expert from: {expert_file}')
+        agent.load(hydra.utils.to_absolute_path(expert_file), f'_{args.env.name}')
 
     episode_reward = 0
 
