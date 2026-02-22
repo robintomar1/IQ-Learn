@@ -2,7 +2,7 @@
 
 method:
   type: iq
-  loss: value
+  loss: value_expert
 
   constrain: False
   grad_pen: False

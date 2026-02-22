@@ -63,6 +63,21 @@ class SoftQ(object):
 
         return action.detach().cpu().numpy()[0]
 
+    def choose_action_batch(self, states):
+        """Choose actions for a batch of states from AsyncVectorEnv.
+        states: np.ndarray of shape [num_envs, *obs_shape], dtype uint8 for Atari.
+        Returns: np.ndarray of shape [num_envs], int actions.
+        """
+        if states.dtype == np.uint8:
+            states = states.astype(np.float32) / 255.0
+        states = torch.FloatTensor(states).to(self.device)
+        with torch.no_grad():
+            q = self.q_net(states)
+            dist = F.softmax(q / self.alpha, dim=1)
+            dist = Categorical(dist)
+            actions = dist.sample()
+        return actions.detach().cpu().numpy()
+
     def getV(self, obs):
         q = self.q_net(obs)
         v = self.alpha * \

@@ -98,9 +98,10 @@ def main(cfg: DictConfig):
                 score = info.get('is_success')
                 break
 
-        if (not REWARD_THRESHOLD or episode_reward >= REWARD_THRESHOLD) and (not use_success or score >= 1.):
+        states, next_states, actions, rewards, dones = zip(*traj)
+        traj_reward = sum(rewards)
+        if (not REWARD_THRESHOLD or episode_reward >= REWARD_THRESHOLD) and traj_reward > 0 and (not use_success or score >= 1.):
             saved_eps += 1
-            states, next_states, actions, rewards, dones = zip(*traj)
 
             expert_trajs["states"].append(states)
             expert_trajs["next_states"].append(next_states)

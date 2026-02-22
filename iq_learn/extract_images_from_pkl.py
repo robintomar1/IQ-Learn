@@ -9,6 +9,7 @@ import os
 import pickle
 import numpy as np
 from pathlib import Path
+from PIL import Image
 
 
 class NumpyCompatUnpickler(pickle.Unpickler):
@@ -46,6 +47,36 @@ def get_image_from_state(state):
     except (TypeError, ValueError):
         pass
     return None
+
+
+def to_uint8_image(img):
+    """Convert image-like array to uint8 without resizing/interpolation."""
+    arr = np.asarray(img)
+    if arr.dtype == np.uint8:
+        return arr
+
+    arr = arr.astype(np.float32)
+    arr = np.nan_to_num(arr, nan=0.0, posinf=255.0, neginf=0.0)
+
+    # Common RL convention: floats in [0, 1]
+    if arr.max() <= 1.0 and arr.min() >= 0.0:
+        arr = arr * 255.0
+
+    arr = np.clip(arr, 0.0, 255.0).astype(np.uint8)
+    return arr
+
+
+def process_stacked_frames(img, stack_mode="latest"):
+    """Process Atari-style stacked grayscale frames represented as (H, W, 4)."""
+    if img.ndim == 3 and img.shape[-1] == 4:
+        if stack_mode == "composite":
+            # Keep any pixel that appeared in the last 4 frames.
+            return np.max(img, axis=-1)
+        # default/latest: most recent frame only
+        return img[..., -1]
+    if img.ndim == 3 and img.shape[-1] == 1:
+        return img[..., 0]
+    return img
 
 
 def _describe_value(v, depth=0):
@@ -116,7 +147,7 @@ def print_data_summary(data):
     print("=" * 60 + "\n")
 
 
-def extract_images(pkl_path, output_dir, max_per_traj=50, max_trajs=None, prefix="img"):
+def extract_images(pkl_path, output_dir, max_per_traj=50, max_trajs=None, prefix="img", stack_mode="latest"):
     """
     Load pkl, find all image-like states, and save them as PNGs.
 
@@ -126,6 +157,7 @@ def extract_images(pkl_path, output_dir, max_per_traj=50, max_trajs=None, prefix
         max_per_traj: Max images to save per trajectory (None = all).
         max_trajs: Max trajectories to process (None = all).
         prefix: Filename prefix for saved images.
+        stack_mode: For (H, W, 4) stacked frames: "latest" or "composite".
     """
     pkl_path = Path(pkl_path)
     output_dir = Path(output_dir)
@@ -151,13 +183,6 @@ def extract_images(pkl_path, output_dir, max_per_traj=50, max_trajs=None, prefix
     if max_trajs is not None:
         n_trajs = min(n_trajs, max_trajs)
 
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        plt = None
-
     total_saved = 0
     for traj_idx in range(n_trajs):
         traj_states = states_list[traj_idx]
@@ -171,47 +196,21 @@ def extract_images(pkl_path, output_dir, max_per_traj=50, max_trajs=None, prefix
             if img is None:
                 continue
 
-            # Normalize to [0,1] if needed (e.g. float already in [0,1])
-            if img.dtype == np.uint8:
-                img = img.astype(np.float32) / 255.0
-            elif img.max() > 1.0 and np.issubdtype(img.dtype, np.floating):
-                img = img / 255.0
-            img = np.clip(img, 0, 1)
-
-            # Normalize layout to (H, W) or (H, W, C) for saving/display
-            # Handle (C, H, W) -> (H, W, C) or (H, W)
+            # Normalize layout to (H, W) or (H, W, C)
+            # Handle (C, H, W) -> (H, W, C)
             if img.ndim == 3 and img.shape[0] in (1, 3, 4):
                 img = np.transpose(img, (1, 2, 0))
             while img.ndim > 3 and img.shape[0] == 1:
                 img = img.squeeze(0)
-            if img.ndim == 2:
-                img = np.expand_dims(img, -1)
+
+            # For Atari stacked grayscale frames (H, W, 4), export selected representation.
+            img = process_stacked_frames(img, stack_mode=stack_mode)
 
             out_name = f"{prefix}_traj{traj_idx:04d}_step{step_idx:05d}.png"
             out_path = output_dir / out_name
 
-            if plt is not None:
-                plt.figure(figsize=(4, 4))
-                if img.ndim == 2 or (img.ndim == 3 and img.shape[-1] == 1):
-                    plt.imshow(img.squeeze(), cmap="gray")
-                elif img.ndim == 3 and img.shape[-1] == 4:
-                    # Atari-style 4-frame stack: show most recent frame as grayscale
-                    plt.imshow(img[..., -1], cmap="gray")
-                else:
-                    plt.imshow(img)
-                plt.axis("off")
-                plt.savefig(out_path, bbox_inches="tight", pad_inches=0)
-                plt.close()
-            else:
-                # Save with imageio or raw numpy
-                try:
-                    import imageio
-                    img_uint8 = (np.clip(img, 0, 1) * 255).astype(np.uint8)
-                    if img_uint8.shape[-1] == 1:
-                        img_uint8 = img_uint8.squeeze(-1)
-                    imageio.imwrite(out_path, img_uint8)
-                except Exception:
-                    np.save(out_path.with_suffix(".npy"), img)
+            img_uint8 = to_uint8_image(img)
+            Image.fromarray(img_uint8).save(out_path)
 
             total_saved += 1
 
@@ -254,6 +253,12 @@ def main():
         action="store_true",
         help="Only print data summary (total images, per episode, other keys); do not extract images",
     )
+    parser.add_argument(
+        "--stack-mode",
+        choices=["latest", "composite"],
+        default="latest",
+        help='How to save (H, W, 4) stacked frames: "latest" or "composite" (default: latest)',
+    )
     args = parser.parse_args()
 
     pkl_path = Path(args.pkl_file)
@@ -289,6 +294,7 @@ def main():
         max_per_traj=max_per_traj,
         max_trajs=args.max_trajs,
         prefix=args.prefix,
+        stack_mode=args.stack_mode,
     )
 
 

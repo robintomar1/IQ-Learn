@@ -81,6 +81,15 @@ def is_atari(env_name):
                         'SeaquestNoFrameskip-v4']
 
 
+class EnvFactory:
+    """Picklable env factory for AsyncVectorEnv subprocesses."""
+    def __init__(self, args):
+        self.args = args
+
+    def __call__(self):
+        return make_env(self.args, monitor=False)
+
+
 def make_env(args, monitor=True):
     if 'dmc' in args.env.name:
         env = make_dcm(args)
