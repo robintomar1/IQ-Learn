@@ -30,3 +30,9 @@ trackio
 tensorboardX
 grad-cam
 # trackio throws error if the python version is 3.8 or 3.9 works with 3.10
+
+# --- Faster vectorised Atari environments (C++ backend, no subprocess IPC) ---
+# envpool 0.8.4 requires JAX < 0.6.0; pin both together
+envpool==0.8.4
+jax==0.4.38
+jaxlib==0.4.38

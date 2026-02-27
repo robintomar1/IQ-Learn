@@ -55,24 +55,28 @@ class SoftQ(object):
         with torch.no_grad():
             q = self.q_net(state)
             dist = F.softmax(q/self.alpha, dim=1)
-            # if sample:
-            dist = Categorical(dist)
-            action = dist.sample()  # if sample else dist.mean
-            # else:
-            #     action = torch.argmax(dist, dim=1)
+            if sample:
+                dist = Categorical(dist)
+                action = dist.sample()
+            else:
+                action = torch.argmax(dist, dim=1)
 
         return action.detach().cpu().numpy()[0]
 
     def choose_action_batch(self, states):
-        """Choose actions for a batch of states from AsyncVectorEnv.
+        """Choose actions for a batch of states from envpool.
         states: np.ndarray of shape [num_envs, *obs_shape], dtype uint8 for Atari.
         Returns: np.ndarray of shape [num_envs], int actions.
         """
         if states.dtype == np.uint8:
-            states = states.astype(np.float32) / 255.0
-        states = torch.FloatTensor(states).to(self.device)
+            # Transfer uint8 to GPU (4x less PCIe than float32), cast on device.
+            # np.ascontiguousarray is a no-op if already C-contiguous (envpool always is).
+            states_t = torch.from_numpy(np.ascontiguousarray(states)).to(
+                device=self.device, dtype=torch.float32).div_(255.0)
+        else:
+            states_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
         with torch.no_grad():
-            q = self.q_net(states)
+            q = self.q_net(states_t)
             dist = F.softmax(q / self.alpha, dim=1)
             dist = Categorical(dist)
             actions = dist.sample()

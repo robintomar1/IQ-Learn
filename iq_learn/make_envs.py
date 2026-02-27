@@ -66,8 +66,12 @@ def make_dcm(cfg):
 
     return env
 
-def make_atari(env):
-    env = AtariWrapper(env)
+def make_atari(env, args):
+    terminal_on_life_loss = getattr(args.env, "atari_terminal_on_life_loss", True)
+    clip_reward = getattr(args.env, "atari_clip_reward", True)
+    env = AtariWrapper(env,
+                       terminal_on_life_loss=terminal_on_life_loss,
+                       clip_reward=clip_reward)
     env = PyTorchFrame(env)
     env = FrameStack(env, 4)
     return env
@@ -90,6 +94,46 @@ class EnvFactory:
         return make_env(self.args, monitor=False)
 
 
+# Mapping from gymnasium NoFrameskip env names to envpool v5 names
+_ENVPOOL_NAME_MAP = {
+    'BreakoutNoFrameskip-v4':       'Breakout-v5',
+    'PongNoFrameskip-v4':           'Pong-v5',
+    'SpaceInvadersNoFrameskip-v4':  'SpaceInvaders-v5',
+    'BeamRiderNoFrameskip-v4':      'BeamRider-v5',
+    'QbertNoFrameskip-v4':          'Qbert-v5',
+    'SeaquestNoFrameskip-v4':       'Seaquest-v5',
+}
+
+
+def make_envpool_atari(env_name, num_envs, seed=0, terminal_on_life_loss=True, clip_reward=True):
+    """Create a vectorised Atari env using envpool (C++ backend, no subprocess IPC).
+
+    Applies the same preprocessing as the gymnasium pipeline:
+    frame_skip=4, grayscale, 84x84 resize, 4-frame stack, episodic life, noop reset.
+    Returns obs of shape (num_envs, 4, 84, 84) dtype uint8.
+    Actions must be int32.
+    """
+    import envpool
+    ep_name = _ENVPOOL_NAME_MAP.get(env_name)
+    if ep_name is None:
+        raise ValueError(f"No envpool mapping for env '{env_name}'. "
+                         f"Supported: {list(_ENVPOOL_NAME_MAP)}")
+    return envpool.make(
+        ep_name,
+        env_type='gymnasium',
+        num_envs=num_envs,
+        seed=seed,
+        episodic_life=terminal_on_life_loss,
+        reward_clip=clip_reward,
+        stack_num=4,
+        gray_scale=True,
+        img_height=84,
+        img_width=84,
+        noop_max=30,
+        frame_skip=4,
+    )
+
+
 def make_env(args, monitor=True):
     if 'dmc' in args.env.name:
         env = make_dcm(args)
@@ -107,7 +151,7 @@ def make_env(args, monitor=True):
         env = Monitor(env, "gym")
 
     if is_atari(args.env.name):
-        env = make_atari(env)
+        env = make_atari(env, args)
 
     # --- ADD THIS BLOCK ---
 

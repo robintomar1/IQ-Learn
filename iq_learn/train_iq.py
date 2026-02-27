@@ -21,8 +21,8 @@ from omegaconf import DictConfig, OmegaConf
 from tensorboardX import SummaryWriter
 
 from wrappers.atari_wrapper import LazyFrames
-from make_envs import make_env, EnvFactory
-from dataset.memory import Memory
+from make_envs import make_env, EnvFactory, make_envpool_atari
+from dataset.memory import Memory, NumpyReplayBuffer
 from agent import make_agent
 from utils.utils import eval_mode, average_dicts, get_concat_samples, evaluate, soft_update, hard_update
 from utils.logger import Logger
@@ -72,8 +72,9 @@ def get_args(cfg: DictConfig):
 @hydra.main(config_path="conf", config_name="config")
 def main(cfg: DictConfig):
     args = get_args(cfg)
-    wandb.init(project=args.project_name) #entity='iq-learn',
-              # sync_tensorboard=True, reinit=True, config=args)
+    if os.environ.get("DISABLE_TRACKIO", "0") != "1":
+        wandb.init(project=args.project_name) #entity='iq-learn',
+                  # sync_tensorboard=True, reinit=True, config=args)
 
     # set seeds
     random.seed(args.seed)
@@ -132,25 +133,34 @@ def main(cfg: DictConfig):
         else:
             print(f'[Warning] Resume checkpoint not found: {resume_path}')
 
+    # Use NumpyReplayBuffer for multi-env path: vectorized sampling, no Python
+    # deque iteration, uint8 storage + GPU-side float32 cast for Atari obs.
+    # Both expert and online buffers use it to eliminate the np.array(list_of_arrays)
+    # bottleneck in get_samples which was ~150ms for batch=2048 with a deque.
+    num_envs = getattr(args, 'num_envs', 1)
+    BufferCls = NumpyReplayBuffer if num_envs > 1 else Memory
+
     # Load expert data
-    expert_memory_replay = Memory(REPLAY_MEMORY//2, args.seed)
+    expert_memory_replay = BufferCls(REPLAY_MEMORY//2, args.seed)
     expert_memory_replay.load(hydra.utils.to_absolute_path(f'experts/{args.env.demo}'),
                               num_trajs=args.expert.demos,
                               sample_freq=args.expert.subsample_freq,
                               seed=args.seed + 42)
     print(f'--> Expert memory size: {expert_memory_replay.size()}')
 
-    online_memory_replay = Memory(REPLAY_MEMORY//2, args.seed+1)
+    online_memory_replay = BufferCls(REPLAY_MEMORY//2, args.seed+1)
 
     # Setup logging
     ts_str = datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = os.path.join(args.log_dir, args.env.name, args.exp_name, ts_str)
-    writer = SummaryWriter(log_dir=log_dir)
+    writer = None
+    if os.environ.get("DISABLE_TB", "0") != "1":
+        writer = SummaryWriter(log_dir=log_dir)
     print(f'--> Saving logs at: {log_dir}')
     logger = Logger(args.log_dir,
                     log_frequency=args.log_interval,
                     writer=writer,
-                    save_tb=True,
+                    save_tb=writer is None,
                     agent=args.agent.name,
                     wandb=wandb)
 
@@ -163,13 +173,16 @@ def main(cfg: DictConfig):
     agent.iq_update_critic = types.MethodType(iq_update_critic, agent)
     n_updates = getattr(args.train, 'updates_per_step', 1) or 1
 
-    num_envs = getattr(args, 'num_envs', 1)
-
     if num_envs > 1:
         # ── Vectorized training loop ──────────────────────────────────────────
-        from gymnasium.vector import AsyncVectorEnv
-        vec_env = AsyncVectorEnv([EnvFactory(args) for _ in range(num_envs)])
-        print(f'Using {num_envs} parallel environments')
+        vec_env = make_envpool_atari(
+            args.env.name,
+            num_envs,
+            seed=args.seed,
+            terminal_on_life_loss=getattr(args.env, "atari_terminal_on_life_loss", True),
+            clip_reward=getattr(args.env, "atari_clip_reward", True),
+        )
+        print(f'Using {num_envs} parallel environments (envpool)')
 
         states, _ = vec_env.reset()
         ep_rewards = np.zeros(num_envs)
@@ -183,35 +196,20 @@ def main(cfg: DictConfig):
                 with eval_mode(agent):
                     actions = agent.choose_action_batch(states)
 
-            next_states, rewards, terminated, truncated, infos = vec_env.step(actions)
+            next_states, rewards, terminated, truncated, infos = vec_env.step(actions.astype(np.int32))
 
-            for i in range(num_envs):
-                # When done, next_states[i] is already the auto-reset state.
-                # Setting done_no_lim=terminated (not truncated) allows correct
-                # infinite-horizon bootstrapping on time-limit truncations.
-                done_no_lim = bool(terminated[i])
-                online_memory_replay.add((
-                    states[i], next_states[i],
-                    int(actions[i]), float(rewards[i]), done_no_lim
-                ))
+            # Vectorised insert — one Python call for all num_envs transitions
+            online_memory_replay.add_batch(
+                states, next_states, actions, rewards, terminated)
 
             ep_rewards += rewards
             steps += num_envs
 
-            # Log completed episodes
+            # Track completed episodes — reward bookkeeping only, no I/O
+            # Logging and checkpointing are rate-limited in the learn block below
             for i in range(num_envs):
                 if terminated[i] or truncated[i]:
                     rewards_window.append(ep_rewards[i])
-                    logger.log('train/episode', epoch, learn_steps)
-                    logger.log('train/episode_reward', ep_rewards[i], learn_steps)
-                    logger.log('train/duration', 0, learn_steps)
-                    logger.dump(learn_steps, save=True)
-                    if epoch % 10 == 0 or epoch < 3:
-                        print(f'  [Ep {epoch}] reward={ep_rewards[i]:.1f} '
-                              f'learn_steps={learn_steps}')
-                    save(agent, epoch, args, output_dir='results')
-                    save_checkpoint(CHECKPOINT_FILE, agent, scaler, epoch + 1,
-                                    steps, learn_steps, best_eval_returns)
                     ep_rewards[i] = 0.0
                     epoch += 1
 
@@ -249,8 +247,21 @@ def main(cfg: DictConfig):
                                              expert_memory_replay, logger, learn_steps)
 
                 if learn_steps % args.log_interval == 0:
-                    for key, loss in losses.items():
-                        writer.add_scalar(key, loss, global_step=learn_steps)
+                    if writer is not None:
+                        for key, loss in losses.items():
+                            writer.add_scalar(key, loss, global_step=learn_steps)
+                    if rewards_window:
+                        logger.log('train/episode', epoch, learn_steps)
+                        logger.log('train/episode_reward', np.mean(rewards_window), learn_steps)
+                        logger.log('train/duration', 0, learn_steps)
+                        logger.dump(learn_steps, save=True)
+                        print(f'  [Step {learn_steps}] mean_ep_reward='
+                              f'{np.mean(rewards_window):.1f} epochs={epoch}')
+
+                if learn_steps % args.checkpoint_interval == 0:
+                    save(agent, 0, args, output_dir='results')
+                    save_checkpoint(CHECKPOINT_FILE, agent, scaler, epoch,
+                                    steps, learn_steps, best_eval_returns)
 
     else:
         # ── Single-env episode-based loop (original) ─────────────────────────
@@ -313,8 +324,9 @@ def main(cfg: DictConfig):
                                                  expert_memory_replay, logger, learn_steps)
 
                     if learn_steps % args.log_interval == 0:
-                        for key, loss in losses.items():
-                            writer.add_scalar(key, loss, global_step=learn_steps)
+                        if writer is not None:
+                            for key, loss in losses.items():
+                                writer.add_scalar(key, loss, global_step=learn_steps)
 
                 if done:
                     break
@@ -336,7 +348,8 @@ def main(cfg: DictConfig):
     print(f"Q-function saved to {save_path}")
 
 def save(agent, epoch, args, output_dir='results'):
-    if epoch % args.save_interval == 0:
+    # Always save for results_best; use save_interval for periodic results
+    if output_dir == 'results_best' or epoch % args.save_interval == 0:
         if args.method.type == "sqil":
             name = f'sqil_{args.env.name}'
         else:

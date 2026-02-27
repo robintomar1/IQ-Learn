@@ -51,6 +51,8 @@ def main(cfg: DictConfig):
     REWARD_THRESHOLD = args.eval.threshold
     MAX_EPS = args.expert.demos
     EPS_STEPS = int(args.env.eps_steps)
+    MAX_IDLE_STEPS = 50  # cut trajectory if no reward for this many consecutive steps
+    MIN_REWARD_DENSITY = 0.01  # minimum reward/step ratio to save a trajectory
 
     memory_replay = Memory(REPLAY_MEMORY)
     total_steps = 0
@@ -68,6 +70,7 @@ def main(cfg: DictConfig):
         traj = []
 
         episode_infos = None
+        idle_steps = 0
         for time_steps in range(EPS_STEPS):
             action = agent.choose_action(state)
             next_state, reward, terminated, truncated, info = env.step(action)
@@ -83,10 +86,20 @@ def main(cfg: DictConfig):
                 memory_replay.save(f'experts/{args.env.name}_{args.expert.demos}')
                 exit()
 
+            # Track consecutive steps without reward and cut early if stuck
+            if reward > 0:
+                idle_steps = 0
+            else:
+                idle_steps += 1
+            if idle_steps >= MAX_IDLE_STEPS:
+                print(f'  Early termination at step {time_steps}: no reward for {MAX_IDLE_STEPS} consecutive steps')
+                break
+
             state = next_state
 
             if is_atari(args.env.name):
-                if 'ale.lives' in info:  # true for breakout, false for pong
+                if (getattr(args.env, "atari_terminal_on_life_loss", True)
+                        and 'ale.lives' in info):  # true for breakout, false for pong
                     done = info['ale.lives'] == 0
                 episode_infos = info.get("episode")
                 if episode_infos is not None:
@@ -100,7 +113,8 @@ def main(cfg: DictConfig):
 
         states, next_states, actions, rewards, dones = zip(*traj)
         traj_reward = sum(rewards)
-        if (not REWARD_THRESHOLD or episode_reward >= REWARD_THRESHOLD) and traj_reward > 0 and (not use_success or score >= 1.):
+        traj_density = traj_reward / len(traj) if len(traj) > 0 else 0
+        if (not REWARD_THRESHOLD or traj_reward >= REWARD_THRESHOLD) and traj_reward > 0 and traj_density >= MIN_REWARD_DENSITY and (not use_success or score >= 1.):
             saved_eps += 1
 
             expert_trajs["states"].append(states)
@@ -121,7 +135,7 @@ def main(cfg: DictConfig):
     get_data_stats(expert_trajs, np.array(expert_rewards), np.array(expert_lengths))
 
     print('Final size of Replay Buffer: {}'.format(sum(expert_trajs["lengths"])))
-    with open(hydra.utils.to_absolute_path(f'experts/{args.env.name}_{args.expert.demos}.pkl'), 'wb') as f:
+    with open(hydra.utils.to_absolute_path(f'experts/{args.env.name}_{args.expert.demos}_filtered.pkl'), 'wb') as f:
         pickle.dump(expert_trajs, f)
     exit()
 

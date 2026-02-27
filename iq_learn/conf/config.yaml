@@ -38,6 +38,10 @@ env:
   learn_steps: 5e5
   eval_interval: 5e3
 
+  # Atari-specific defaults
+  atari_terminal_on_life_loss: False
+  atari_clip_reward: False
+
   # use pixels
   from_pixels: False
 
@@ -45,9 +49,10 @@ method:
   type: iq
 
 # Extra args
-log_interval: 100  # Log every this many steps
+log_interval: 100  # Log every this many learn_steps
 log_dir: logs/
-save_interval: 5 # Save networks every this many epochs
+save_interval: 5 # Save networks every this many epochs (single-env path)
+checkpoint_interval: 5000  # Save checkpoint every this many learn_steps (multi-env path)
 hydra_base_dir: ""
 eval_only: False
 
