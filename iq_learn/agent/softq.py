@@ -8,6 +8,10 @@ import hydra
 
 from wrappers.atari_wrapper import LazyFrames
 
+# Clamp q/alpha to prevent softmax/logsumexp overflow → NaN.
+# |50| is far beyond where softmax differences matter.
+Q_CLAMP = 50.0
+
 
 class SoftQ(object):
     def __init__(self, num_inputs, action_dim, batch_size, args):
@@ -54,7 +58,8 @@ class SoftQ(object):
         state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
         with torch.no_grad():
             q = self.q_net(state)
-            dist = F.softmax(q/self.alpha, dim=1)
+            scaled_q = (q / self.alpha).clamp(-Q_CLAMP, Q_CLAMP)
+            dist = F.softmax(scaled_q, dim=1)
             if sample:
                 dist = Categorical(dist)
                 action = dist.sample()
@@ -77,15 +82,16 @@ class SoftQ(object):
             states_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
         with torch.no_grad():
             q = self.q_net(states_t)
-            dist = F.softmax(q / self.alpha, dim=1)
+            scaled_q = (q / self.alpha).clamp(-Q_CLAMP, Q_CLAMP)
+            dist = F.softmax(scaled_q, dim=1)
             dist = Categorical(dist)
             actions = dist.sample()
         return actions.detach().cpu().numpy()
 
     def getV(self, obs):
         q = self.q_net(obs)
-        v = self.alpha * \
-            torch.logsumexp(q/self.alpha, dim=1, keepdim=True)
+        scaled_q = (q / self.alpha).clamp(-Q_CLAMP, Q_CLAMP)
+        v = self.alpha * torch.logsumexp(scaled_q, dim=1, keepdim=True)
         return v
 
     def critic(self, obs, action, both=False):
@@ -100,8 +106,8 @@ class SoftQ(object):
 
     def get_targetV(self, obs):
         q = self.target_net(obs)
-        target_v = self.alpha * \
-            torch.logsumexp(q/self.alpha, dim=1, keepdim=True)
+        scaled_q = (q / self.alpha).clamp(-Q_CLAMP, Q_CLAMP)
+        target_v = self.alpha * torch.logsumexp(scaled_q, dim=1, keepdim=True)
         return target_v
 
     def update(self, replay_buffer, logger, step):

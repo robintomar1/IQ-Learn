@@ -439,6 +439,10 @@ def iq_update_critic(self, policy_batch, expert_batch, logger, step):
     logger.log('train/critic_loss', critic_loss, step)
 
     # Optimize the critic
+    if torch.isnan(critic_loss) or torch.isinf(critic_loss):
+        print(f"[WARN] NaN/Inf critic_loss at step {step}, skipping update")
+        return loss_dict
+
     self.critic_optimizer.zero_grad()
     if scaler is not None:
         scaler.scale(critic_loss).backward()
