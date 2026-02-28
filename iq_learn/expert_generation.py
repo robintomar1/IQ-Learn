@@ -33,7 +33,7 @@ def main(cfg: DictConfig):
         from baselines_zoo.baselines_expert import BaselinesExpert
         # Use absolute path to the rl-baselines3-zoo folder
         baselines_folder = hydra.utils.to_absolute_path('rl-baselines3-zoo/rl-trained-agents')
-        agent = BaselinesExpert(args.env.name, folder=baselines_folder, algorithm='a2c')
+        agent = BaselinesExpert(args.env.name, folder=baselines_folder, algorithm=args.eval.expert_algorithm)
         # For baselines experts, we don't need the expert_file path
         print(f'Loading expert from: {baselines_folder}')
         agent.load("", "")  # BaselinesExpert uses its own path logic
@@ -71,8 +71,10 @@ def main(cfg: DictConfig):
 
         episode_infos = None
         idle_steps = 0
+        use_success = False
+        score = None
         for time_steps in range(EPS_STEPS):
-            action = agent.choose_action(state)
+            action = agent.choose_action(state, deterministic=args.eval.deterministic)
             next_state, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             if is_atari(args.env.name) and isinstance(action, np.ndarray):
@@ -135,7 +137,8 @@ def main(cfg: DictConfig):
     get_data_stats(expert_trajs, np.array(expert_rewards), np.array(expert_lengths))
 
     print('Final size of Replay Buffer: {}'.format(sum(expert_trajs["lengths"])))
-    with open(hydra.utils.to_absolute_path(f'experts/{args.env.name}_{args.expert.demos}_filtered.pkl'), 'wb') as f:
+    algorithm = args.eval.expert_algorithm
+    with open(hydra.utils.to_absolute_path(f'experts/{args.env.name}_{algorithm}_{args.expert.demos}_filtered.pkl'), 'wb') as f:
         pickle.dump(expert_trajs, f)
     exit()
 

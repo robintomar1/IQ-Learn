@@ -9,6 +9,7 @@ torchaudio>=2.3.0
 
 # --- Reinforcement Learning ---
 stable-baselines3>=2.2.1
+sb3-contrib>=2.2.1
 # Gymnasium with all environment families (classic_control, atari, box2d, toy_text, etc.)
 gymnasium[all]>=0.29.1,<1.0.0
 # Atari ROMs (required to run Atari envs; install after gymnasium[all])

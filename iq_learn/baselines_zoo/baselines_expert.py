@@ -25,6 +25,13 @@ except ImportError:
     print("Warning: stable_baselines3 not available. Install with: pip install stable-baselines3")
 
 try:
+    from sb3_contrib import QRDQN
+    SB3_CONTRIB_AVAILABLE = True
+except ImportError:
+    QRDQN = None
+    SB3_CONTRIB_AVAILABLE = False
+
+try:
     import gymnasium as gym
     GYM_AVAILABLE = True
 except ImportError:
@@ -59,13 +66,14 @@ class BaselinesExpert:
         # Mapping of algorithm names to their corresponding SB3 classes
         self.ALGORITHM_MAP = {
             'a2c': A2C,
-            'ddpg': DDPG, 
+            'ddpg': DDPG,
             'dqn': DQN,
             'ppo': PPO,
             'sac': SAC,
             'td3': TD3,
-            # Add more algorithms as needed
         }
+        if SB3_CONTRIB_AVAILABLE:
+            self.ALGORITHM_MAP['qrdqn'] = QRDQN
         
         self.env_name = env_name
         self.folder = folder
@@ -105,7 +113,14 @@ class BaselinesExpert:
             raise ValueError(f"Unsupported algorithm: {self.algorithm}")
             
         print(f"Loading {self.algorithm.upper()} model from {model_path}")
-        self.model = algorithm_class.load(model_path)
+        # Older zoo models may have incompatible settings; override them
+        custom_objects = {
+            "optimize_memory_usage": False,
+            "learning_rate": 1e-4,
+            "lr_schedule": lambda _: 1e-4,
+            "exploration_schedule": lambda _: 0.0,
+        }
+        self.model = algorithm_class.load(model_path, custom_objects=custom_objects)
         
         # Set device (move model to device instead of setting attribute)
         if TORCH_AVAILABLE and hasattr(self.model, 'set_parameters'):

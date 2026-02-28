@@ -2,7 +2,7 @@
 
 env:
   name: BreakoutNoFrameskip-v4
-  demo: BreakoutNoFrameskip-v4_30_filtered.pkl
+  demo: BreakoutNoFrameskip-v4_multi_60_filtered.pkl
   replay_mem: 200000
   initial_mem: 5000
   eps_steps: 1e6
@@ -13,7 +13,7 @@ env:
   atari_clip_reward: False
 
 expert:
-  demos: 30
+  demos: 60
   subsample_freq: 1
 
 eval:
@@ -21,6 +21,8 @@ eval:
   threshold:  # optional: e.g. 10 to only save episodes with score >= 10
   use_baselines: True  # use in-repo softq policy (no baselines_zoo)
   eps: 25
+  expert_algorithm: a2c
+  deterministic: True
 
 method:
   loss: value_expert

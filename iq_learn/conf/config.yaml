@@ -23,12 +23,14 @@ expert:
   subsample_freq: 1
 
 eval:
-  policy: 
+  policy:
   threshold:
   use_baselines: False
   eps: 10
   transfer: False
   expert_env: ''
+  expert_algorithm: a2c
+  deterministic: True
 
 env:
   replay_mem: 50000
