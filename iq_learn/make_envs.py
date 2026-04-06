@@ -18,7 +18,12 @@ try:
     import ale_py
     gym.register_envs(ale_py)
 except ImportError:
-    print("Warning: ale_py not found. Atari environments may not be available.")
+    pass
+try:
+    from shimmy.registration import register_gymnasium_envs
+    register_gymnasium_envs()
+except ImportError:
+    pass
 
 def make_dcm(cfg):
     import dmc2gym
