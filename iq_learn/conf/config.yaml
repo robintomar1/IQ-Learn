@@ -7,26 +7,30 @@ device: ??? # to be specified later
 gamma: 0.99
 seed: 0
 pretrain: null
+resume: null  # Path to a checkpoint.pt file to resume full training state (optimizer, step count, etc.)
 
 num_seed_steps: 0 # Don't need seeding for IL (Use 1000 for RL)
 only_expert_states: False
+num_envs: 1  # Number of parallel envs for data collection (>1 uses envpool vectorized backend)
 
 train:
   batch: 32
-  use_target: False
-  soft_update: False
+  use_target: False  # Whether to use a target Q-network for stability
+  soft_update: False  # Whether to use Polyak-averaged soft target updates
 
 expert:
   demos: 1
   subsample_freq: 1
 
 eval:
-  policy: 
+  policy:
   threshold:
   use_baselines: False
   eps: 10
   transfer: False
   expert_env: ''
+  expert_algorithm: a2c  # Algorithm used to train the expert policy (for loading correct model)
+  deterministic: True  # Use deterministic (argmax) actions during evaluation
 
 env:
   replay_mem: 50000
@@ -36,6 +40,10 @@ env:
   learn_steps: 5e5
   eval_interval: 5e3
 
+  # Atari-specific wrapper flags
+  atari_terminal_on_life_loss: False  # Treat life loss as episode termination in AtariWrapper
+  atari_clip_reward: False  # Clip rewards to {-1, 0, +1} in AtariWrapper
+
   # use pixels
   from_pixels: False
 
@@ -43,9 +51,10 @@ method:
   type: iq
 
 # Extra args
-log_interval: 100  # Log every this many steps
+log_interval: 100  # Log every this many learn_steps
 log_dir: logs/
-save_interval: 5 # Save networks every this many epochs
+save_interval: 5 # Save networks every this many epochs (single-env path)
+checkpoint_interval: 5000  # Save full checkpoint every this many learn_steps (multi-env path, includes optimizer state)
 hydra_base_dir: ""
 eval_only: False
 
@@ -55,6 +64,7 @@ offline: False
 num_actor_updates: 1
 
 defaults:
+  - _self_
   - method: iq
   - agent: softq
   - env: cartpole

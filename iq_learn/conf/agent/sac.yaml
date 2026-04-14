@@ -3,6 +3,7 @@
 agent:
   name: sac
   _target_: agent.sac.SAC
+  _recursive_: false  # Prevent Hydra from recursively resolving nested configs (agent builds sub-modules itself)
   obs_dim: ??? # to be specified later
   action_dim: ??? # to be specified later
 
@@ -34,6 +35,7 @@ q_net:
   action_dim: ${agent.action_dim}
   hidden_dim: 256
   hidden_depth: 2
+  args: {}  # Placeholder overridden at runtime by make_agent with full args
 
 diag_gaussian_actor:
   _target_: agent.sac_models.DiagGaussianActor

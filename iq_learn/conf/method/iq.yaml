@@ -2,7 +2,7 @@
 
 method:
   type: iq
-  loss: value
+  loss: value_expert  # IQ-Learn loss variant: samples only from expert states (works for offline + online)
 
   constrain: False
   grad_pen: False

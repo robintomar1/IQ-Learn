@@ -2,28 +2,42 @@
 
 env:
   name: BreakoutNoFrameskip-v4
-  demo: BreakoutNoFrameskip-v4_30.pkl
+  demo: BreakoutNoFrameskip-v4_multi_60_filtered.pkl  # Multi-algorithm expert dataset (60 filtered trajectories)
   replay_mem: 200000
   initial_mem: 5000
   eps_steps: 1e6
   eps_window: 10
   learn_steps: 1e6
+  eval_interval: 5000  # Evaluate every N learn_steps
+  atari_terminal_on_life_loss: False  # Do NOT end episode on life loss (let agent see full game)
+  atari_clip_reward: False  # Use raw rewards (no clipping)
 
 expert:
-  demos: 20
+  demos: 60  # Number of expert trajectories to load from demo file
   subsample_freq: 1
 
 eval:
-  policy: 
-  threshold:
-  use_baselines: True
-  eps: 10
+  policy: trained_policies/softq_implicit_BreakoutNoFrameskip-v4  # Path to pre-trained policy for evaluation
+  threshold:  # Optional: minimum score threshold for saving episodes
+  use_baselines: True  # Use in-repo softq policy (not baselines_zoo)
+  eps: 25  # Number of evaluation episodes
+  expert_algorithm: a2c  # Expert was trained with A2C
+  deterministic: True  # Deterministic (argmax) actions during eval
+
+method:
+  loss: value_expert  # IQ-Learn loss variant that samples only from expert states
+  chi: True  # Enable chi-squared divergence regularization
+  alpha: 0.1  # Regularization strength
 
 agent:
-  critic_target_update_frequency: 1000
+  init_temp: 0.1  # Initial softmax temperature for action selection
+  critic_target_update_frequency: 100  # Update target Q-network every N gradient steps
 
 train:
-  batch: 64
+  batch: 64  # Mini-batch size for Q-network updates
+  use_target: True  # Use target Q-network for bootstrapping
+  soft_update: True  # Polyak-averaged target updates (vs hard copy)
+  updates_per_step: 1  # Number of gradient updates per environment step
 
 q_net:
   _target_: agent.softq_models.AtariQNetwork
