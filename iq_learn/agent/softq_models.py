@@ -17,12 +17,12 @@ class SoftQNetwork(nn.Module):
         return NotImplementedError
 
     def forward(self, x, both=False):
-        if "DoubleQ" in self.args.q_net._target_:
+        if "DoubleQ" in type(self).__name__:
             out = self._forward(x, both)
         else:
             out = self._forward(x)
 
-        if self.args.method.tanh:
+        if getattr(getattr(self.args, 'method', None), 'tanh', False):
             return self.tanh(out) * 1/(1-self.args.gamma)
         return out
 
