@@ -59,6 +59,8 @@ class MetersGroup(object):
         self._meters = defaultdict(AverageMeter)
         self._csv_file = open(self._csv_file_name, 'w')
         self._csv_writer = None
+        # All possible CSV columns from format so writer accepts later-added keys
+        self._csv_fieldnames = sorted(set(k for k, _, _ in formating) | {'step'})
 
     def _prepare_file(self, prefix, suffix):
         file_name = f'{prefix}.{suffix}'
@@ -83,10 +85,12 @@ class MetersGroup(object):
     def _dump_to_csv(self, data):
         if self._csv_writer is None:
             self._csv_writer = csv.DictWriter(self._csv_file,
-                                              fieldnames=sorted(data.keys()),
-                                              restval=0.0)
+                                              fieldnames=self._csv_fieldnames,
+                                              restval=0.0,
+                                              extrasaction='ignore')
             self._csv_writer.writeheader()
-        self._csv_writer.writerow(data)
+        row = {k: data.get(k, 0.0) for k in self._csv_fieldnames}
+        self._csv_writer.writerow(row)
         self._csv_file.flush()
 
     def _format(self, key, value, ty):
@@ -125,9 +129,11 @@ class Logger(object):
                  save_tb=False,
                  log_frequency=10000,
                  agent='sac',
-                 writer=None):
+                 writer=None,
+                 wandb=None):
         self._log_dir = log_dir
         self._log_frequency = log_frequency
+        self._wandb = wandb
         if writer:
             self._sw = writer
         else:
@@ -157,6 +163,11 @@ class Logger(object):
     def _try_sw_log(self, key, value, step):
         if self._sw is not None:
             self._sw.add_scalar(key, value, step)
+        if self._wandb is not None:
+            try:
+                self._wandb.log({key: value}, step=step)
+            except Exception:
+                pass
 
     def _try_sw_log_video(self, key, frames, step):
         if self._sw is not None:
