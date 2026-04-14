@@ -1,13 +1,16 @@
 from itertools import count
 import torch
-import gym
+import gymnasium as gym
 import hydra
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
-from make_envs import make_env
+from make_envs import make_env, make_atari, is_atari
 from agent import make_agent
 from utils.utils import eval_mode
+
+import ale_py
+gym.register_envs(ale_py)
 
 
 def get_args(cfg: DictConfig):
@@ -16,13 +19,21 @@ def get_args(cfg: DictConfig):
     return cfg
 
 
+def make_render_env(args):
+    """Create env with render_mode='human' for visual playback."""
+    env = gym.make(args.env.name, render_mode="human")
+    if is_atari(args.env.name):
+        env = make_atari(env, args)
+    return env
+
+
 @hydra.main(config_path="conf", config_name="config")
 def main(cfg: DictConfig):
     args = get_args(cfg)
 
-    BATCH = args.train.batch
     EPISODE_STEPS = int(args.env.eps_steps)
 
+    # Use non-render env for agent creation (obs/action dims)
     env = make_env(args)
     agent = make_agent(env, args)
 
@@ -33,36 +44,31 @@ def main(cfg: DictConfig):
 
     agent.load(hydra.utils.to_absolute_path(policy_file), f'_{args.env.name}')
 
-    episode_reward = 0
-    evaluate(agent, env, num_episodes=args.eval.eps)
-
     if args.eval_only:
+        evaluate(agent, env, num_episodes=args.eval.eps)
         exit()
 
+    # Close non-render env and create one with rendering
+    env.close()
+    env = make_render_env(args)
+
     for epoch in count():
-        state = env.reset()
+        state, info = env.reset()
         episode_reward = 0
         for episode_step in range(EPISODE_STEPS):
-            env.render()
-            action = agent.choose_action(state, sample=False)
-            next_state, reward, done, info = env.step(action)
+            with eval_mode(agent):
+                action = agent.choose_action(state, sample=False)
+            next_state, reward, terminated, truncated, info = env.step(action)
             episode_reward += reward
 
-            if done:
+            if terminated or truncated:
                 break
             state = next_state
-        print('Ep {}\tMoving average score: {:.2f}\t'.format(epoch, episode_reward))
+        print('Ep {}\tScore: {:.2f}'.format(epoch, episode_reward))
 
 
 def evaluate(actor, env, num_episodes=10):
-    """Evaluates the policy.
-    Args:
-      actor: A policy to evaluate.
-      env: Environment to evaluate the policy on.
-      num_episodes: A number of episodes to average the policy on.
-    Returns:
-      Averaged reward and a total number of steps.
-    """
+    """Evaluates the policy."""
     total_timesteps = []
     total_returns = []
 
@@ -70,15 +76,16 @@ def evaluate(actor, env, num_episodes=10):
         eps_timesteps = 0
         eps_returns = 0
 
-        state = env.reset()
+        state, info = env.reset()
         done = False
         while not done:
             with eval_mode(actor):
                 action = actor.choose_action(state, sample=False)
-            next_state, reward, done, info = env.step(action)
+            next_state, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
 
-            if 'ale.lives' in info:  # true for breakout, false for pong
-                done = info['ale.lives'] == 0
+            if 'lives' in info:
+                done = info['lives'] == 0
 
             eps_returns += reward
             eps_timesteps += 1
