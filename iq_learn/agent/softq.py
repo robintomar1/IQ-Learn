@@ -8,6 +8,10 @@ import hydra
 
 from wrappers.atari_wrapper import LazyFrames
 
+# Clamp q/alpha to prevent softmax/logsumexp overflow → NaN.
+# |50| is far beyond where softmax differences matter.
+Q_CLAMP = 50.0
+
 
 class SoftQ(object):
     def __init__(self, num_inputs, action_dim, batch_size, args):
@@ -53,19 +57,38 @@ class SoftQ(object):
         state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
         with torch.no_grad():
             q = self.q_net(state)
-            dist = F.softmax(q/self.alpha, dim=1)
-            # if sample:
-            dist = Categorical(dist)
-            action = dist.sample()  # if sample else dist.mean
-            # else:
-            #     action = torch.argmax(dist, dim=1)
+            scaled_q = (q / self.alpha).clamp(-Q_CLAMP, Q_CLAMP)
+            dist = F.softmax(scaled_q, dim=1)
+            if sample:
+                dist = Categorical(dist)
+                action = dist.sample()
+            else:
+                action = torch.argmax(dist, dim=1)
 
         return action.detach().cpu().numpy()[0]
 
+    def choose_action_batch(self, states):
+        """Choose actions for a batch of states from envpool.
+        states: np.ndarray of shape [num_envs, *obs_shape], dtype uint8 for Atari.
+        Returns: np.ndarray of shape [num_envs], int actions.
+        """
+        if states.dtype == np.uint8:
+            states_t = torch.from_numpy(np.ascontiguousarray(states)).to(
+                device=self.device, dtype=torch.float32).div_(255.0)
+        else:
+            states_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            q = self.q_net(states_t)
+            scaled_q = (q / self.alpha).clamp(-Q_CLAMP, Q_CLAMP)
+            dist = F.softmax(scaled_q, dim=1)
+            dist = Categorical(dist)
+            actions = dist.sample()
+        return actions.detach().cpu().numpy()
+
     def getV(self, obs):
         q = self.q_net(obs)
-        v = self.alpha * \
-            torch.logsumexp(q/self.alpha, dim=1, keepdim=True)
+        scaled_q = (q / self.alpha).clamp(-Q_CLAMP, Q_CLAMP)
+        v = self.alpha * torch.logsumexp(scaled_q, dim=1, keepdim=True)
         return v
 
     def critic(self, obs, action, both=False):
@@ -80,8 +103,8 @@ class SoftQ(object):
 
     def get_targetV(self, obs):
         q = self.target_net(obs)
-        target_v = self.alpha * \
-            torch.logsumexp(q/self.alpha, dim=1, keepdim=True)
+        scaled_q = (q / self.alpha).clamp(-Q_CLAMP, Q_CLAMP)
+        target_v = self.alpha * torch.logsumexp(scaled_q, dim=1, keepdim=True)
         return target_v
 
     def update(self, replay_buffer, logger, step):
@@ -121,7 +144,19 @@ class SoftQ(object):
 
     # Load model parameters
     def load(self, path, suffix=""):
-        critic_path = f'{path}/{self.args.agent.name}{suffix}'
+        # If path is a file, load it directly
+        if os.path.isfile(path):
+            critic_path = path
+        else:
+            # Try path/agent_name+suffix (e.g. trained_policies/softq/softq_BreakoutNoFrameskip-v4)
+            candidate = os.path.join(path, f'{self.args.agent.name}{suffix}')
+            if os.path.isfile(candidate):
+                critic_path = candidate
+            else:
+                # Try parent dir fallback (e.g. trained_policies/softq_BreakoutNoFrameskip-v4)
+                parent = os.path.dirname(path)
+                fallback = os.path.join(parent, f'{self.args.agent.name}{suffix}')
+                critic_path = fallback if os.path.isfile(fallback) else candidate
         print('Loading models from {}'.format(critic_path))
         self.q_net.load_state_dict(torch.load(critic_path, map_location=self.device))
 
