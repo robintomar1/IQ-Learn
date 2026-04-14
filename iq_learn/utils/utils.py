@@ -109,7 +109,6 @@ def mlp(input_dim, hidden_dim, output_dim, hidden_depth, output_mod=None):
 
 def get_concat_samples(policy_batch, expert_batch, args):
     online_batch_state, online_batch_next_state, online_batch_action, online_batch_reward, online_batch_done = policy_batch
-
     expert_batch_state, expert_batch_next_state, expert_batch_action, expert_batch_reward, expert_batch_done = expert_batch
 
     if args.method.type == "sqil":
@@ -118,9 +117,15 @@ def get_concat_samples(policy_batch, expert_batch, args):
         # convert expert reward to 1
         expert_batch_reward = torch.ones_like(expert_batch_reward)
 
-    batch_state = torch.cat([online_batch_state, expert_batch_state], dim=0)
-    batch_next_state = torch.cat(
-        [online_batch_next_state, expert_batch_next_state], dim=0)
+    def concat_obs(obs1, obs2):
+        """Concatenate observations — handles both tensors and multimodal dicts."""
+        if isinstance(obs1, dict):
+            return {k: torch.cat([obs1[k], obs2[k]], dim=0) for k in obs1.keys()}
+        else:
+            return torch.cat([obs1, obs2], dim=0)
+
+    batch_state = concat_obs(online_batch_state, expert_batch_state)
+    batch_next_state = concat_obs(online_batch_next_state, expert_batch_next_state)
     batch_action = torch.cat([online_batch_action, expert_batch_action], dim=0)
     batch_reward = torch.cat([online_batch_reward, expert_batch_reward], dim=0)
     batch_done = torch.cat([online_batch_done, expert_batch_done], dim=0)

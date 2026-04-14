@@ -14,8 +14,19 @@ def iq_loss(agent, current_Q, current_v, next_v, batch):
     obs, next_obs, action, env_reward, done, is_expert = batch
 
     loss_dict = {}
+
+    def slice_obs(observation, mask):
+        """Slices an observation whether it's a Tensor or a Dict."""
+        if isinstance(observation, dict):
+            return {k: v[mask] for k, v in observation.items()}
+        else:
+            return observation[mask]
+
     # keep track of value of initial states
-    v0 = agent.getV(obs[is_expert.squeeze(1), ...]).mean()
+    mask = is_expert.squeeze(1)
+    expert_obs = slice_obs(obs, mask)
+
+    v0 = agent.getV(expert_obs).mean()
     loss_dict['v0'] = v0.item()
 
     #  calculate 1st term for IQ loss
@@ -88,10 +99,16 @@ def iq_loss(agent, current_Q, current_v, next_v, batch):
 
     if args.method.grad_pen:
         # add a gradient penalty to loss (Wasserstein_1 metric)
-        gp_loss = agent.critic_net.grad_pen(obs[is_expert.squeeze(1), ...],
-                                            action[is_expert.squeeze(1), ...],
-                                            obs[~is_expert.squeeze(1), ...],
-                                            action[~is_expert.squeeze(1), ...],
+        expert_mask = is_expert.squeeze(1)
+        policy_mask = ~expert_mask
+
+        obs_expert = slice_obs(obs, expert_mask)
+        obs_policy = slice_obs(obs, policy_mask)
+
+        gp_loss = agent.critic_net.grad_pen(obs_expert,
+                                            action[expert_mask, ...],
+                                            obs_policy,
+                                            action[policy_mask, ...],
                                             args.method.lambda_gp)
         loss_dict['gp_loss'] = gp_loss.item()
         loss += gp_loss
