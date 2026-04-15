@@ -145,8 +145,6 @@ def main(cfg: DictConfig):
                               seed=args.seed + 42)
     print(f'--> Expert memory size: {expert_memory_replay.size()}')
 
-    online_memory_replay = BufferCls(REPLAY_MEMORY//2, args.seed+1)
-
     # Setup logging
     ts_str = datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = os.path.join(args.log_dir, args.env.name, args.exp_name, ts_str)
@@ -161,16 +159,72 @@ def main(cfg: DictConfig):
                     agent=args.agent.name,
                     wandb=wandb)
 
-    # track mean reward and scores
-    scores_window = deque(maxlen=EPISODE_WINDOW)
-    rewards_window = deque(maxlen=EPISODE_WINDOW)
-
-    # Patch iq_update methods once (shared by both training paths)
+    # Patch iq_update methods once (shared by all training paths)
     agent.iq_update = types.MethodType(iq_update, agent)
     agent.iq_update_critic = types.MethodType(iq_update_critic, agent)
     n_updates = getattr(args.train, 'updates_per_step', 1) or 1
 
-    if num_envs > 1:
+    if args.offline:
+        # ── Offline training loop (expert data only) ─────────────────────
+        print('Offline training: learning from expert data only (no environment interaction)')
+        learn_steps_start = learn_steps
+        start_time = time.time()
+
+        while learn_steps < LEARN_STEPS:
+            learn_steps += 1
+
+            # Sample two independent batches from expert buffer
+            # One serves as "policy" data, the other as "expert" data
+            losses = agent.iq_update(expert_memory_replay,
+                                     expert_memory_replay, logger, learn_steps)
+
+            if learn_steps % args.log_interval == 0:
+                elapsed = time.time() - start_time
+                steps_per_sec = (learn_steps - learn_steps_start) / max(elapsed, 1e-6)
+                if writer is not None:
+                    for key, loss in losses.items():
+                        writer.add_scalar(key, loss, global_step=learn_steps)
+                logger.log('train/episode', 0, learn_steps)
+                logger.log('train/episode_reward', 0, learn_steps)
+                logger.log('train/duration', elapsed, learn_steps)
+                logger.dump(learn_steps, save=True)
+                print(f'  [Step {learn_steps}/{int(LEARN_STEPS)}] '
+                      f'loss={losses.get("total_loss", 0):.6f} '
+                      f'v0={losses.get("v0", 0):.4f} '
+                      f'steps/s={steps_per_sec:.1f}')
+
+            if learn_steps % int(args.env.eval_interval) == 0:
+                eval_returns, eval_timesteps = evaluate(
+                    agent, eval_env, num_episodes=args.eval.eps)
+                returns = np.mean(eval_returns)
+                logger.log('eval/episode_reward', returns, learn_steps)
+                logger.log('eval/episode', 0, learn_steps)
+                logger.dump(learn_steps, ty='eval')
+                print(f'  [EVAL] learn_steps={learn_steps} mean_return={returns:.2f}')
+                if returns > best_eval_returns:
+                    best_eval_returns = returns
+                    save(agent, 0, args, output_dir='results_best')
+
+            if learn_steps % args.checkpoint_interval == 0:
+                save(agent, 0, args, output_dir='results')
+                save_checkpoint(CHECKPOINT_FILE, agent, scaler, 0,
+                                0, learn_steps, best_eval_returns)
+
+        total_time = time.time() - start_time
+        print(f'Finished! {int(LEARN_STEPS)} steps in {total_time:.1f}s '
+              f'({LEARN_STEPS/total_time:.1f} steps/s)')
+        try:
+            wandb.finish()
+        except Exception:
+            pass
+
+    elif num_envs > 1:
+        online_memory_replay = BufferCls(REPLAY_MEMORY//2, args.seed+1)
+
+        # track mean reward and scores
+        scores_window = deque(maxlen=EPISODE_WINDOW)
+        rewards_window = deque(maxlen=EPISODE_WINDOW)
+
         # ── Vectorized training loop ──────────────────────────────────────
         vec_env = make_envpool_atari(
             args.env.name,
@@ -259,6 +313,12 @@ def main(cfg: DictConfig):
                                     steps, learn_steps, best_eval_returns)
 
     else:
+        online_memory_replay = BufferCls(REPLAY_MEMORY//2, args.seed+1)
+
+        # track mean reward and scores
+        scores_window = deque(maxlen=EPISODE_WINDOW)
+        rewards_window = deque(maxlen=EPISODE_WINDOW)
+
         # ── Single-env episode-based loop ─────────────────────────────────
         episode_reward = 0
         for epoch in count(start_epoch):
